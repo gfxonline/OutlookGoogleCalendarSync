@@ -17,6 +17,8 @@ namespace OutlookGoogleCalendarSync {
         private MAPIFolder useOutlookCalendar;
         private Dictionary<string, MAPIFolder> calendarFolders = new Dictionary<string, MAPIFolder>();
         private OlExchangeConnectionMode exchangeConnectionMode;
+
+        private Boolean galBlocked = false;
         
         public void Connect() {
             OutlookCalendar.AttachToOutlook(ref oApp, openOutlookOnFail: true, withSystemCall: false);
@@ -48,7 +50,8 @@ namespace OutlookGoogleCalendarSync {
                 try {
                     DateTime triggerOOMsecurity = DateTime.Now;
                     try {
-                        currentUser = oNS.CurrentUser;
+                        //currentUser = oNS.CurrentUser;
+                        galBlocked = true;
                         if (!MainForm.Instance.IsHandleCreated && (DateTime.Now - triggerOOMsecurity).TotalSeconds > 1) {
                             log.Warn(">1s delay possibly due to Outlook security popup.");
                             OutlookCalendar.OOMsecurityInfo = true;
@@ -71,29 +74,35 @@ namespace OutlookGoogleCalendarSync {
                             } catch (System.Exception ex2) {
                                 if (delay == maxDelay) {
                                     log.Warn("OGCS is unable to obtain CurrentUser from Outlook.");
-                                    OGCSexception.Analyse(ex2, true);
-                                    System.Diagnostics.Process.Start("https://github.com/phw198/OutlookGoogleCalendarSync/issues/287");
-                                    throw new ApplicationException("OGCS is unable to communicate with Outlook, possibly due to anti-virus or corporate policies."+
-                                        "\r\nPlease register your interest on GitHub if you would like to see a workaround provided.");
+                                    if (OGCSexception.GetErrorCode(ex2) == "0x80004004") { //E_ABORT
+                                        galBlocked = true;
+                                    } else {
+                                        OGCSexception.Analyse(ex2, true);
+                                        System.Diagnostics.Process.Start("https://github.com/phw198/OutlookGoogleCalendarSync/issues/287");
+                                        throw new ApplicationException("OGCS is unable to communicate with Outlook, possibly due to anti-virus or corporate policies." +
+                                            "\r\nPlease register your interest on GitHub if you would like to see a workaround provided.");
+                                    }
                                 } else
                                     OGCSexception.Analyse(ex2);
                             }
                             delay++;
                         }
                     }
-                    
+
                     //Issue 402
                     log.Debug("Getting active window inspector");
                     Inspector inspector = oApp.ActiveInspector();
                     inspector = (Inspector)OutlookCalendar.ReleaseObject(inspector);
                     log.Debug("Done.");
-                    currentUserSMTP = GetRecipientEmail(currentUser);
-                    currentUserName = currentUser.Name;
+                    if (!galBlocked) {
+                        currentUserSMTP = GetRecipientEmail(currentUser);
+                        currentUserName = currentUser.Name;
+                    }
                 } finally {
-                    currentUser = (Recipient)OutlookCalendar.ReleaseObject(currentUser);
+                    //currentUser = (Recipient)OutlookCalendar.ReleaseObject(currentUser);
                 }
 
-                if (currentUserName == "Unknown") {
+                if (!galBlocked && currentUserName == "Unknown") {
                     log.Info("Current username is \"Unknown\"");
                     if (Settings.Instance.AddAttendees) {
                         System.Windows.Forms.MessageBox.Show("It appears you do not have an Email Account configured in Outlook.\r\n" +
@@ -103,7 +112,7 @@ namespace OutlookGoogleCalendarSync {
                     }
                 }
 
-                //Get the folders configured in Outlook
+                log.Debug("Get the folders configured in Outlook");
                 folders = oNS.Folders;
 
                 // Get the Calendar folders
@@ -175,6 +184,9 @@ namespace OutlookGoogleCalendarSync {
         public String CurrentUserSMTP() {
             return currentUserSMTP;
         }
+        //public String CurrentUserName() {
+        //    return currentUserName;
+        //}
         public Boolean Offline() {
             try {
                 return oApp.GetNamespace("mapi").Offline;
@@ -299,35 +311,78 @@ namespace OutlookGoogleCalendarSync {
 
         private void getDefaultCalendar(NameSpace oNS, ref MAPIFolder defaultCalendar) {
             log.Debug("Finding default Mailbox calendar folders");
-            MainForm.Instance.rbOutlookDefaultMB.CheckedChanged -= MainForm.Instance.rbOutlookDefaultMB_CheckedChanged;
-            MainForm.Instance.rbOutlookDefaultMB.Checked = true;
-            Settings.Instance.OutlookService = OutlookCalendar.Service.DefaultMailbox;
-            MainForm.Instance.rbOutlookDefaultMB.CheckedChanged += MainForm.Instance.rbOutlookDefaultMB_CheckedChanged;
+            try {
+                MainForm.Instance.rbOutlookDefaultMB.CheckedChanged -= MainForm.Instance.rbOutlookDefaultMB_CheckedChanged;
+                MainForm.Instance.rbOutlookDefaultMB.Checked = true;
+                Settings.Instance.OutlookService = OutlookCalendar.Service.DefaultMailbox;
+                MainForm.Instance.rbOutlookDefaultMB.CheckedChanged += MainForm.Instance.rbOutlookDefaultMB_CheckedChanged;
 
-            defaultCalendar = oNS.GetDefaultFolder(OlDefaultFolders.olFolderCalendar);
-            calendarFolders.Add("Default " + defaultCalendar.Name, defaultCalendar);
-            string excludeDeletedFolder = folders.Application.Session.GetDefaultFolder(OlDefaultFolders.olFolderDeletedItems).EntryID;
+                log.Debug("Getting default calendar folder");
+                defaultCalendar = oNS.GetDefaultFolder(OlDefaultFolders.olFolderCalendar);
+                if (defaultCalendar == null)
+                    log.Debug("defaultCalendar = null");
+                else {
+                    try { log.Debug("defaultCalendar = " + defaultCalendar.ToString()); } 
+                    catch (System.Exception ex) { log.Error("defaultCalendar: " + ex.Message); }
+                }
+                try {
+                    log.Debug("defaultCalendar.Name = " + defaultCalendar.Name);
+                } catch (System.Exception ex) {
+                    log.Error("defaultCalendar.Name: " + ex.Message);
+                }
 
-            MainForm.Instance.lOutlookCalendar.BackColor = System.Drawing.Color.Yellow;
-            MainForm.Instance.lOutlookCalendar.Text = "Getting calendars";
-            findCalendars(oNS.DefaultStore.GetRootFolder().Folders, calendarFolders, excludeDeletedFolder, defaultCalendar);
-            MainForm.Instance.lOutlookCalendar.BackColor = System.Drawing.Color.White;
-            MainForm.Instance.lOutlookCalendar.Text = "Select calendar";
+                if (defaultCalendar == null) {
+                    log.Warn("No default calendar folder was found!");
+                } else {
+                    log.Debug("Adding default calendar folder to dropdown");
+                    try {
+                        calendarFolders = new Dictionary<string, MAPIFolder>();
+                        calendarFolders.Add("Default " + defaultCalendar.Name, defaultCalendar);
+                    } catch (System.Exception ex) {
+                        log.Error("Failed adding default calendar. " + ex.Message);
+                        calendarFolders.Add("Default " + defaultCalendar.Name ?? "Calendar", defaultCalendar);
+                    }
+                }
+                log.Debug("Setting excludeDeletedFolder");
+                string excludeDeletedFolder = folders.Application.Session.GetDefaultFolder(OlDefaultFolders.olFolderDeletedItems).EntryID;
+                if (string.IsNullOrEmpty(excludeDeletedFolder)) log.Warn("No Deleted Items folder was found!");
+                log.Debug("A");
+                MainForm.Instance.lOutlookCalendar.BackColor = System.Drawing.Color.Yellow;
+                log.Debug("B");
+                MainForm.Instance.lOutlookCalendar.Text = "Getting calendars";
+                log.Debug("C");
+                findCalendars(oNS.DefaultStore.GetRootFolder().Folders, calendarFolders, excludeDeletedFolder, defaultCalendar);
+                log.Debug("D");
+                MainForm.Instance.lOutlookCalendar.BackColor = System.Drawing.Color.White;
+                log.Debug("E");
+                MainForm.Instance.lOutlookCalendar.Text = "Select calendar";
+                log.Debug("F");
+            } catch (System.Exception ex) {
+                OGCSexception.Analyse(ex, true);
+                throw ex;
+            }
         }
 
         private void findCalendars(Folders folders, Dictionary<string, MAPIFolder> calendarFolders, String excludeDeletedFolder, MAPIFolder defaultCalendar = null) {
+            log.Debug("Recursively finding calendars in folder tree");
             //Initiate progress bar (red line underneath "Getting calendars" text)
             System.Drawing.Graphics g = MainForm.Instance.tabOutlook.CreateGraphics();
+            log.Debug("AA");
             System.Drawing.Pen p = new System.Drawing.Pen(System.Drawing.Color.Red, 3);
+            log.Debug("BB");
             System.Drawing.Point startPoint = new System.Drawing.Point(MainForm.Instance.lOutlookCalendar.Location.X, 
                 MainForm.Instance.lOutlookCalendar.Location.Y + MainForm.Instance.lOutlookCalendar.Size.Height + 3);
+            log.Debug("CC");
             double stepSize = MainForm.Instance.lOutlookCalendar.Size.Width / folders.Count;
-            
+            log.Debug("DD");
+
             int fldCnt = 0;
             foreach (MAPIFolder folder in folders) {
+                log.Debug("EE");
                 fldCnt++;
                 System.Drawing.Point endPoint = new System.Drawing.Point(MainForm.Instance.lOutlookCalendar.Location.X + Convert.ToInt16(fldCnt * stepSize),
                     MainForm.Instance.lOutlookCalendar.Location.Y + MainForm.Instance.lOutlookCalendar.Size.Height + 3);
+                log.Debug("FF");
                 try { g.DrawLine(p, startPoint, endPoint); } catch { /*May get GDI+ error if g has been repainted*/ }
                 System.Windows.Forms.Application.DoEvents();
                 try {
@@ -355,9 +410,12 @@ namespace OutlookGoogleCalendarSync {
                     }
                 }
             }
+            log.Debug("GG");
             p.Dispose();
+            log.Debug("HH");
             try { g.Clear(System.Drawing.Color.White); } catch { }
             g.Dispose();
+            log.Debug("II");
             System.Windows.Forms.Application.DoEvents();
         }
 
@@ -369,20 +427,32 @@ namespace OutlookGoogleCalendarSync {
         /// <param name="parentFolder">Recursive parent folder - leave null on initial call</param>
         private void calendarFolderAdd(String name, MAPIFolder folder, MAPIFolder parentFolder = null) {
             try {
-                calendarFolders.Add(name, folder);
-            } catch (System.ArgumentException ex) {
-                if (OGCSexception.GetErrorCode(ex) == "0x80070057") {
-                    //An item with the same key has already been added.
-                    //Let's recurse up to the parent folder, looking to make it unique
-                    object parentObj = (parentFolder != null ? parentFolder.Parent : folder.Parent);
-                    if (parentObj is NameSpace) {
-                        //We've traversed all the way up the folder path to the root and still not unique
-                        log.Warn("MAPIFolder " + name + " does not have a unique name - so cannot use!");
-                    } else if (parentObj is MAPIFolder) {
-                        String parentFolderName = (parentObj as MAPIFolder).FolderPath.Split('\\').Last();
-                        calendarFolderAdd(System.IO.Path.Combine(parentFolderName, name), folder, parentObj as MAPIFolder);
+                try {
+                    calendarFolders.Add(name, folder);
+                } catch (System.ArgumentException ex) {
+                    log.Debug("AA1");
+                    if (OGCSexception.GetErrorCode(ex) == "0x80070057") {
+                        //An item with the same key has already been added.
+                        //Let's recurse up to the parent folder, looking to make it unique
+                        log.Debug("AA2");
+                        object parentObj = (parentFolder != null ? parentFolder.Parent : folder.Parent);
+                        log.Debug("AA3");
+                        if (parentObj is NameSpace) {
+                            log.Debug("AA4");
+                            //We've traversed all the way up the folder path to the root and still not unique
+                            log.Warn("MAPIFolder " + name + " does not have a unique name - so cannot use!");
+                        } else if (parentObj is MAPIFolder) {
+                            log.Debug("AA5");
+                            String parentFolderName = (parentObj as MAPIFolder).FolderPath.Split('\\').Last();
+                            log.Debug("AA6");
+                            calendarFolderAdd(System.IO.Path.Combine(parentFolderName, name), folder, parentObj as MAPIFolder);
+                            log.Debug("AA7");
+                        }
                     }
                 }
+            } catch (System.Exception e) {
+                log.Error("calendarFolderAdd(): " + e.Message);
+                throw e;
             }
         }
 

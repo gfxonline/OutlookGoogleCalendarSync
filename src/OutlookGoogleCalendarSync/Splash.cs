@@ -43,12 +43,12 @@ namespace OutlookGoogleCalendarSync {
                     splash.lSyncCount.Left = (splash.panel1.Width - (splash.lSyncCount.Width)) / 2;
                 }
                 //Load settings directly from XML
-                donor = (XMLManager.ImportElement("Donor", Program.SettingsFile) ?? "false") == "true";
+                donor = true;// (XMLManager.ImportElement("Donor", Program.SettingsFile) ?? "false") == "true";
 
                 String subscribedDate = XMLManager.ImportElement("Subscribed", Program.SettingsFile);
                 if (string.IsNullOrEmpty(subscribedDate)) subscribedDate = "01-Jan-2000";
                 subscribed = DateTime.Parse(subscribedDate);
-                Boolean hideSplash = (XMLManager.ImportElement("HideSplashScreen", Program.SettingsFile) ?? "false") == "true";
+                Boolean hideSplash = true;//(XMLManager.ImportElement("HideSplashScreen", Program.SettingsFile) ?? "false") == "true";
                 initialised = true;
 
                 splash.cbHideSplash.Checked = hideSplash;
