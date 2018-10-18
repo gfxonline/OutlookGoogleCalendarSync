@@ -1,6 +1,185 @@
 | Release Notes |
 |:---|
 
+# v2.7.6.0 - Alpha
+
+**Enhancements**
+- Syncing a common calendar to/from more than one other now supported!
+- Improved logic to determine meeting organiser's timezone
+- Don't delete Google event immediately after reclaiming it
+- New FAIL logging level added, below Error
+- Nicer output when authenticating with Google and reclaiming items
+- Show authorised Google account on Settings tab
+
+**Bugfix**
+- Fixed XML namespace for obfuscation sync direction
+- Stopped error reporting obstructing Squirrel events
+- Fixed crash on OGCS automated startup 
+- Don't try and retrieve Google event if synced from different calendar (avoid 404 errors)
+
+# v2.7.5.0 - Alpha
+
+**Enhancements**
+- Properly retrieve meeting organiser's timezone
+- Suggest manual start of Outlook if OGCS not permitted
+- G->O: Allow synced items to be assigned specific category (not just colour)
+- Added option for users to automatically feedback errors
+
+**Bugfix**
+- Google token expiry not calculated in UTC
+- Regression: Properly release Outlook if no Outlook GUI
+
+# v2.7.4.0 - Alpha
+
+**Enhancements**
+- Sync colours / categories
+- Option to force particular colour for synced items
+- Collapsible sections added to Sync Options configuration screen
+
+# v2.7.3.0 - Alpha
+
+**Enhancements**
+- Improved Push sync mechanism
+- General error handling improvements
+- First code-signed release of OGCS! (Should reduce and finally eliminate anti-virus false positives)
+
+**Bugfix**
+- Cope with copy and paste of Outlook appointments
+- Stop Push syncs continually firing
+
+# v2.7.2.0 - Alpha
+
+**Enhancements**
+- Handle Apple iCloud changing immutable Outlook IDs
+- Option to not sync Outlook invites you have yet to responded to
+- Command line parameters to support multi-instance OGCS
+- Detect Windows system timezone changes
+
+**Bugfix**
+- Only redirect to wiki once per COM error
+- Turn on support for TLS1.1 and 1.2 (GitHub removed support for TLS1.0)
+
+# v2.7.1.0 - Alpha
+
+**Enhancements**
+- Google DLLs updated to latest releases; extraneous DLLs removed
+- Better ability to cancel a running sync
+- OGCS stays responsive whilst Oauth process takes place; can be cancelled
+- Code refactor to better prepare for future developments
+
+**Bugfix**
+- Translate annual recurrences into 12 monthly recurrences (Google apps work with this better)
+- Disconnection of Google account
+- Increase tolerance of when to compare recurring series exceptions
+- Fixed CSV file creation and format issues
+
+# v2.7.0.0 - Beta
+
+:spiral_notepad: If upgrading from v2.6.0, this release will require you to reauthorise OGCS to make changes to your Google calendar.  
+:pushpin: If you are using your own API key, you will need to enable Google+ in your project.
+
+**Enhancements** rolled in from Alpha releases
+- Sync output now HTML, not plain text!
+- Ability to set all synced items as "Available" in target calendar
+- Option to cloak Google Event attendee email addresses (prevent Google sending unwanted notifications)
+- New upgrade alert window containing "What's New?" improvement details + option to skip a release.
+- Help/F1 to see online user guide.
+- Google authorisation process streamlined - no longer needs manual copy+paste of code.
+- If Outlook address book (GAL) blocked by corporate policy, remove OGCS features in order that basic sync works.
+- Only access GAL on start-up if user requested sync of meeting attendees (which can trigger Outlook security pop-up).
+- Don't block subsequent scheduled syncs if network drop out caused transient failure.
+- Show categories from alternative mailboxes
+- More reliable setting of next sync + restarting push sync.
+- Remove user configuration files upon uninstall
+- Feedback on settings Save button
+- Skip sync of appointment body/description, if access is denied
+- Cope with Google still using obsolete Calcutta timezone.
+- Additional info/tip when changing "What" attributes to be synced.
+- Handle Outlook and Google calendars being in different timezones.
+- Automatically invert category selection when changing between include/exclude.
+- New pseudo Outlook category "No category assigned".
+----
+# v2.6.6.0 - Alpha
+
+**Enhancements**
+- New upgrade alert window containing "What's New?" improvement details.  
+- Option to skip a release.  
+- Help/F1 to see online user guide.  
+- Don't block subsequent scheduled syncs if network drop out caused transient failure.  
+- Continue switch to MD5.  
+
+**Bugfix**
+- Updating weekday recurrence interval back into Outlook.  
+- Remember obfuscation sync direction.  
+- Sync freezes if OGCS starts in notification tray.  
+
+# v2.6.5.0 - Alpha
+
+**Enhancements**
+- Sync output now HTML, not plain text!
+- Change Sync button text when shift-clicking.
+
+**Bugfix**
+- Updating weekday recurrence interval back into Outlook.
+
+# v2.6.4.0 - Alpha
+
+**Enhancements**
+- Show categories from alternative mailboxes
+- More reliable setting of next sync + restarting push sync.
+- Improved upgrade experience + error handling
+- Remove user configuration files upon uninstall
+- Better calendar security
+
+**Bugfix**
+- Forgetting obfuscation rules
+- Filter on items with multiple categories may not work
+
+# v2.6.3.0 - Alpha
+
+**Enhancements**
+- Ability to set all synced items as "Available" in target calendar
+- Choose if all synced items or just created items are enforced as available and/or private.
+- Feedback on settings `Save` button
+- Skip sync of appointment body/description, if access is denied
+- Cope with Google still using obsolete Calcutta timezone.
+
+**Breaking Change**
+- If items were already configured to sync as "Private", this may need reconfiguring.
+
+**Bugfix**
+- Forgetting `Add attendees` setting
+- Give user feedback when manually checking for update
+
+# v2.6.2.0 - Alpha
+
+**Enhancements**
+- Option to cloak Google Event attendee email addresses.
+- Additional info/tip when changing "What" attributes to be synced.
+- Handle Outlook and Google calendars being in different timezones.
+- Automatically invert category selection when changing between include/exclude.
+- New pseudo Outlook category "No category assigned".
+
+**Bugfix**
+- Detect copied Outlook items and remove OGCS metadata from copy.
+- Handle failure to update notification tray icon if not present.
+
+# v2.6.1.0 - Alpha
+
+:spiral_notepad: This release will require you to reauthorise OGCS to make changes to your Google calendar.  
+:pushpin: If you are using your own API key, you will need to enable Google+ in your project.
+
+**Enhancements**
+- If Outlook address book (GAL) blocked by corporate policy, remove OGCS features in order that basic sync works.
+- Only access GAL on start-up if user requested sync of meeting attendees (which can trigger Outlook security pop-up).
+- Code refactor into new Authenticator class.
+- Google authentication no longer needs manual copy+paste of code.
+- GoogleAuthorizationCode form removed.
+- Replaced deprecated method to retrieve email address from authenticator's account.
+- Removed CodePlex to Squirrel migration code.
+- Update Google Auth libraries to v1.6.0
+- Update Google Calendar library to v1.5.0.55
+
 # v2.6.0.0 - Beta
 
 :boom: This release completes the migration to GitHub.

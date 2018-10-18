@@ -2,7 +2,6 @@
 using Squirrel;
 using System;
 using System.ComponentModel;
-using System.Deployment.Application;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -22,7 +21,7 @@ namespace OutlookGoogleCalendarSync {
             get { return isBusy; } 
         }
         private String restartUpdateExe = "";
-        private static String nonGitHubReleaseUri = null; //When testing, eg: "\\\\127.0.0.1\\Squirrel";
+        private static String nonGitHubReleaseUri = null; //When testing, eg: @"\\127.0.0.1\Squirrel";
 
         public Updater() { }
 
@@ -31,7 +30,7 @@ namespace OutlookGoogleCalendarSync {
         /// </summary>
         /// <param name="updateButton">The button that triggered this, if manually called.</param>
         public async void CheckForUpdate(Button updateButton = null) {
-            if (System.Diagnostics.Debugger.IsAttached) return;
+            if (string.IsNullOrEmpty(nonGitHubReleaseUri) && System.Diagnostics.Debugger.IsAttached) return;
 
             bt = updateButton;
             log.Debug((isManualCheck ? "Manual" : "Automatic") + " update check requested.");
@@ -40,20 +39,36 @@ namespace OutlookGoogleCalendarSync {
             Settings.Instance.Proxy.Configure();
 
             try {
-                if (IsSquirrelInstall()) {
-                    if (await githubCheck()) {
-                        log.Debug("Restarting");
-                        try {
-                            System.Diagnostics.Process.Start(restartUpdateExe, "--processStartAndWait OutlookGoogleCalendarSync.exe");
-                        } catch (System.Exception ex) {
-                            OGCSexception.Analyse(ex, true);
-                        }
-                        MainForm.Instance.NotificationTray.ExitItem_Click(null, null);
+                if (!string.IsNullOrEmpty(nonGitHubReleaseUri) || Program.IsInstalled) {
+                    try {
+                       if (await githubCheck()) {
+                           log.Info("Restarting OGCS.");
+                           try {
+                               System.Diagnostics.Process.Start(restartUpdateExe, "--processStartAndWait OutlookGoogleCalendarSync.exe");
+                           } catch (System.Exception ex) {
+                               OGCSexception.Analyse(ex, true);
+                           }
+                           try {
+                               Forms.Main.Instance.NotificationTray.ExitItem_Click(null, null);
+                           } catch (System.Exception ex) {
+                               log.Error("Failed to exit via the notification tray icon. " + ex.Message);
+                               log.Debug("NotificationTray is " + (Forms.Main.Instance.NotificationTray == null ? "null" : "not null"));
+                               Forms.Main.Instance.Close();
+                           }
+                       }
+                    } finally {
+                        if (isManualCheck) updateButton.Text = "Check For Update";
                     }
-                    if (isManualCheck) updateButton.Text = "Check For Update";
                 } else {
                     zipChecker();
                 }
+
+            } catch (ApplicationException ex) {
+                log.Error(ex.Message + " " + ex.InnerException.Message);
+                if (MessageBox.Show("The upgrade failed.\nWould you like to get the latest version from the project website manually?", "Upgrade Failed", MessageBoxButtons.YesNo, MessageBoxIcon.Exclamation) == DialogResult.Yes) {
+                    System.Diagnostics.Process.Start("https://phw198.github.io/OutlookGoogleCalendarSync/");
+                }
+
             } catch (System.Exception ex) {
                 log.Error("Failure checking for update. " + ex.Message);
                 if (isManualCheck) {
@@ -62,7 +77,7 @@ namespace OutlookGoogleCalendarSync {
             }
         }
 
-        public Boolean IsSquirrelInstall() {
+        public static Boolean IsSquirrelInstall() {
             Boolean isSquirrelInstall = false;
             try {
                 using (var updateManager = new Squirrel.UpdateManager(null)) {
@@ -70,11 +85,15 @@ namespace OutlookGoogleCalendarSync {
                     isSquirrelInstall = updateManager.IsInstalledApp;
                 }
             } catch (System.Exception ex) {
-                log.Error("Failed to determine if app is a Squirrel install. Assuming not.");
-                OGCSexception.Analyse(ex);
+                if (OGCSexception.GetErrorCode(ex) == "0x80131500") //Update.exe not found
+                    log.Debug(ex.Message);
+                else {
+                    log.Error("Failed to determine if app is a Squirrel install. Assuming not.");
+                    OGCSexception.Analyse(ex);
+                }
             }
             
-            log.Info("This " + (isSquirrelInstall ? "is" : "is not") + " a Squirrel " + (Program.IsClickOnceInstall ? "aware ClickOnce " : "") + "install.");
+            log.Info("This " + (isSquirrelInstall ? "is" : "is not") + " a Squirrel install.");
             return isSquirrelInstall;
         }
 
@@ -86,44 +105,104 @@ namespace OutlookGoogleCalendarSync {
             try {
                 String installRootDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 if (string.IsNullOrEmpty(nonGitHubReleaseUri))
-                    updateManager = await Squirrel.UpdateManager.GitHubUpdateManager("https://github.com/phw198/OutlookGoogleCalendarSync", "OutlookGoogleCalendarSync", installRootDir);
+                    updateManager = await Squirrel.UpdateManager.GitHubUpdateManager("https://github.com/phw198/OutlookGoogleCalendarSync", "OutlookGoogleCalendarSync", installRootDir,
+                        prerelease: Settings.Instance.AlphaReleases);
                 else
                     updateManager = new Squirrel.UpdateManager(nonGitHubReleaseUri, "OutlookGoogleCalendarSync", installRootDir);
 
                 UpdateInfo updates = await updateManager.CheckForUpdate();
                 if (updates.ReleasesToApply.Any()) {
-                    log.Info("Found " + updates.ReleasesToApply.Count() + " new releases available.");
+                    if (updates.CurrentlyInstalledVersion != null)
+                        log.Info("Currently installed version: " + updates.CurrentlyInstalledVersion.Version.ToString());
+                    log.Info("Found " + updates.ReleasesToApply.Count() + " newer releases available.");
 
                     foreach (ReleaseEntry update in updates.ReleasesToApply.OrderBy(x => x.Version).Reverse()) {
                         log.Info("Found a new " + update.Version.SpecialVersion + " version: " + update.Version.Version.ToString());
-                        if (update.Version.SpecialVersion == "alpha" && !Settings.Instance.AlphaReleases) {
-                            log.Debug("User doesn't want alpha releases.");
-                            continue;
+
+                        if (!this.isManualCheck && update.Version.Version.ToString() == Settings.Instance.SkipVersion) {
+                            log.Info("The user has previously requested to skip this version.");
+                            break;
                         }
-                        DialogResult dr = MessageBox.Show("A " + update.Version.SpecialVersion + " update for OGCS is available.\nWould you like to update the application to v" +
-                            update.Version.Version.ToString() + " now?", "OGCS Update Available", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
-                        if (dr == DialogResult.Yes) {
-                            /* 
-                            new System.Net.WebClient().DownloadFile("https://github.com/phw198/OutlookGoogleCalendarSync/releases/download/v2.6-beta/OutlookGoogleCalendarSync-2.5.0-beta-full.nupkg", "OutlookGoogleCalendarSync-2.5.0-beta-full.nupkg");
-                            String notes = update.GetReleaseNotes("");
-                            //if (!string.IsNullOrEmpty(notes)) log.Debug(notes);
-                            */
-                            log.Info("Beginning the migration to Squirrel/github release...");
-                            var migrator = new ClickOnceToSquirrelMigrator.InClickOnceAppMigrator(updateManager, Application.ProductName);
-                            log.Info("RootAppDirectory: " + updateManager.RootAppDirectory);
-                            await migrator.Execute();
 
-                            log.Debug("Moving the Update.exe file");
-                            System.IO.File.Move("..\\Update.exe", updateManager.RootAppDirectory + "\\Update.exe");
-
-                            log.Info("The application has been successfully updated.");
-                            MessageBox.Show("The application has been updated and will now restart.",
-                                "OGCS successfully updated!", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                            log.Info("Restarting OGCS.");
-                            restartUpdateExe = updateManager.RootAppDirectory + "\\Update.exe";
-                            return true;
+                        String releaseNotes = "";                        
+                        if (nonGitHubReleaseUri != null) {
+                            releaseNotes = update.GetReleaseNotes(nonGitHubReleaseUri);
                         } else {
-                            log.Info("User chose not to upgrade.");
+                            //Somewhat annoyingly we have to download the release in order to get the release notes, as they are embedded in the .nupkg upgrade file(s)
+                            try {
+                                updateManager.DownloadReleases(new[] { update }).Wait(30 * 1000);
+                                System.Collections.Generic.Dictionary<ReleaseEntry, String> allReleaseNotes = updates.FetchReleaseNotes();
+                                releaseNotes = allReleaseNotes[update];
+                            } catch (System.Exception ex) {
+                                OGCSexception.Analyse(ex);
+                                log.Error("Failed pre-fetching release notes. " + ex.Message);
+                                releaseNotes = null;
+                            }
+                        }
+
+                        DialogResult dr = DialogResult.Cancel;
+                        if (!string.IsNullOrEmpty(releaseNotes)) log.Debug("Release notes retrieved.");
+                        var t = new System.Threading.Thread(() => new Forms.UpdateInfo(update.Version.Version.ToString(), update.Version.SpecialVersion, releaseNotes, out dr));
+                        t.SetApartmentState(System.Threading.ApartmentState.STA);
+                        t.Start();
+                        t.Join();
+
+                        String squirrelAnalyticsLabel = "from=" + Application.ProductVersion + ";to=" + update.Version.Version.ToString();
+                        if (dr == DialogResult.No) {
+                            log.Info("User chose not to upgrade right now.");
+                            Analytics.Send(Analytics.Category.squirrel, Analytics.Action.upgrade, squirrelAnalyticsLabel + ";later");
+
+                        } else if (dr == DialogResult.Ignore) {
+                            Analytics.Send(Analytics.Category.squirrel, Analytics.Action.upgrade, squirrelAnalyticsLabel + ";skipped");
+
+                        } else if (dr == DialogResult.Yes) {
+                            log.Debug("Download started...");
+                            if (!updateManager.DownloadReleases(new[] { update }).Wait(60 * 1000)) {
+                                log.Warn("The download failed to completed within 60 seconds.");
+                                Analytics.Send(Analytics.Category.squirrel, Analytics.Action.download, squirrelAnalyticsLabel + ";timedout");
+                                if (MessageBox.Show("The update failed to download.", "Download timed out", MessageBoxButtons.RetryCancel, MessageBoxIcon.Exclamation) == DialogResult.Retry) {
+                                    if (!updateManager.DownloadReleases(new[] { update }).Wait(60 * 1000)) {
+                                        Analytics.Send(Analytics.Category.squirrel, Analytics.Action.download, squirrelAnalyticsLabel + ";retry-timedout");
+                                        if (MessageBox.Show("The update failed to download again.\nTo download from the project website, click Yes.", "Download timed out", MessageBoxButtons.YesNo, MessageBoxIcon.Exclamation) == DialogResult.Yes) {
+                                            Analytics.Send(Analytics.Category.squirrel, Analytics.Action.download, squirrelAnalyticsLabel + ";from-website");
+                                            System.Diagnostics.Process.Start("https://phw198.github.io/OutlookGoogleCalendarSync/");
+                                        } else
+                                            Analytics.Send(Analytics.Category.squirrel, Analytics.Action.download, squirrelAnalyticsLabel + ";gave-up");
+                                        break;
+                                    }
+                                } else {
+                                    if (MessageBox.Show("Would you like to download directly from the project website?", "Go to OGCS website", MessageBoxButtons.YesNo, MessageBoxIcon.Exclamation) == DialogResult.Yes) {
+                                        Analytics.Send(Analytics.Category.squirrel, Analytics.Action.download, squirrelAnalyticsLabel + ";from-website");
+                                        System.Diagnostics.Process.Start("https://phw198.github.io/OutlookGoogleCalendarSync/");
+                                    } else
+                                        Analytics.Send(Analytics.Category.squirrel, Analytics.Action.download, squirrelAnalyticsLabel + ";gave-up");
+                                    break;
+                                }
+                            }
+
+                            try {
+                                log.Debug("Download complete.");
+                                Analytics.Send(Analytics.Category.squirrel, Analytics.Action.download, squirrelAnalyticsLabel + ";successful");
+                                log.Info("Applying the updated release...");
+                                updateManager.ApplyReleases(updates).Wait();
+
+                                log.Info("The application has been successfully updated.");
+                                MessageBox.Show("The application has been updated and will now restart.",
+                                    "OGCS successfully updated!", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                                restartUpdateExe = updateManager.RootAppDirectory + "\\Update.exe";
+                                return true;
+
+                            } catch (System.AggregateException ae) {
+                                foreach (System.Exception ex in ae.InnerExceptions) {
+                                    OGCSexception.Analyse(ex, true);
+                                    ex.Data.Add("analyticsLabel", squirrelAnalyticsLabel);
+                                    throw new ApplicationException("Failed upgrading OGCS.", ex);
+                                }
+                            } catch (System.Exception ex) {
+                                OGCSexception.Analyse(ex, true);
+                                ex.Data.Add("analyticsLabel", squirrelAnalyticsLabel);
+                                throw new ApplicationException("Failed upgrading OGCS.", ex);
+                            }
                         }
                         break;
                     }
@@ -134,9 +213,18 @@ namespace OutlookGoogleCalendarSync {
                     }
                 }
 
+            } catch (ApplicationException ex) {
+                Analytics.Send(Analytics.Category.squirrel, Analytics.Action.download, ex.Data["analyticsLabel"] + ";failed");
+                throw ex;
+            } catch (System.AggregateException ae) {
+                log.Error("Failed checking for update.");
+                foreach (System.Exception ex in ae.InnerExceptions) {
+                    OGCSexception.Analyse(ex, true);
+                    throw ex;
+                }
             } catch (System.Exception ex) {
+                log.Error("Failed checking for update.");
                 OGCSexception.Analyse(ex, true);
-                if (ex.InnerException != null) log.Error(ex.InnerException.Message);
                 throw ex;
             } finally {
                 isBusy = false;
@@ -167,6 +255,7 @@ namespace OutlookGoogleCalendarSync {
                 var migrator = new ClickOnceToSquirrelMigrator.InSquirrelAppMigrator(Application.ProductName);
                 migrator.Execute().Wait();
                 log.Info("ClickOnce install has been removed.");
+                Analytics.Send(Analytics.Category.squirrel, Analytics.Action.uninstall, "clickonce");
             } catch (System.AggregateException ae) {
                 foreach (System.Exception ex in ae.InnerExceptions) {
                     clickOnceUninstallError(ex);
@@ -188,6 +277,7 @@ namespace OutlookGoogleCalendarSync {
                 log.Error("Problem encountered on initiall install.");
                 OGCSexception.Analyse(ex, true);
             }
+            Analytics.Send(Analytics.Category.squirrel, Analytics.Action.install, version.ToString());
             onFirstRun();
         }
         private static void onAppUpdate(Version version) {
@@ -213,12 +303,22 @@ namespace OutlookGoogleCalendarSync {
                     log.Debug("Removing registry uninstall keys.");
                     mgr.RemoveUninstallerRegistryEntry();
                 }
+                Analytics.Send(Analytics.Category.squirrel, Analytics.Action.uninstall, version.ToString());
                 if (MessageBox.Show("Sorry to see you go!\nCould you spare 30 seconds for some feedback?", "Uninstalling OGCS",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes) {
                     log.Debug("User opted to give feedback.");
+                    Analytics.Send(Analytics.Category.squirrel, Analytics.Action.uninstall, Application.ProductVersion + "-feedback");
                     System.Diagnostics.Process.Start("https://docs.google.com/forms/d/e/1FAIpQLSfRWYFdgyfbFJBMQ0dz14patu195KSKxdLj8lpWvLtZn-GArw/viewform");
                 } else {
                     log.Debug("User opted not to give feedback.");
+                }
+                log.Info("Deleting directory " + Path.GetDirectoryName(Settings.ConfigFile));
+                try {
+                    log.Logger.Repository.Shutdown();
+                    log4net.LogManager.Shutdown();
+                    Directory.Delete(Path.GetDirectoryName(Settings.ConfigFile), true);
+                } catch (System.Exception ex) {
+                    try { log.Error(ex.Message); } catch { }
                 }
             } catch (System.Exception ex) {
                 log.Error("Problem encountered on app uninstall.");
@@ -235,8 +335,9 @@ namespace OutlookGoogleCalendarSync {
             //but HandleEvents() fails if eg "-beta" is present.
             //"C:\Users\username\AppData\Local\OutlookGoogleCalendarSync\app-2.5.0-beta\OutlookGoogleCalendarSync.exe" --squirrel-uninstall 2.5.0-beta
             try {
-                String[] cliArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
-                if (cliArgs.Length == 2 && cliArgs[0].ToLower().StartsWith("--squirrel")) {
+                String[] cliArgs = null;
+                if (Program.StartedWithSquirrelArgs) {
+                    cliArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
                     log.Debug("CLI arguments: " + string.Join(" ", cliArgs));
                     cliArgs[1] = cliArgs[1].Split('-')[0];
                 }
@@ -246,6 +347,7 @@ namespace OutlookGoogleCalendarSync {
                 return null;
             }
         }
+
         private static void clickOnceUninstallError(System.Exception ex) {
             if (OGCSexception.GetErrorCode(ex) == "0x80131509") {
                 log.Debug("No ClickOnce install found.");
@@ -273,10 +375,21 @@ namespace OutlookGoogleCalendarSync {
 
             log.Debug("Checking for ZIP update...");
             string html = "";
+            String errorDetails = "";
             try {
                 html = new System.Net.WebClient().DownloadString("https://github.com/phw198/OutlookGoogleCalendarSync/blob/master/docs/latest_zip_release.md");
-            } catch (Exception ex) {
-                log.Error("Failed to retrieve data: " + ex.Message);
+            } catch (System.Net.WebException ex) {
+                errorDetails = ex.Message;
+                if (OGCSexception.GetErrorCode(ex) == "0x80131509")
+                    log.Warn("Failed to retrieve data (no network?): " + errorDetails);
+                else {
+                    OGCSexception.Analyse(ex);
+                    log.Error("Failed to retrieve data: " + errorDetails);
+                }
+            } catch (System.Exception ex) {
+                errorDetails = ex.Message;
+                OGCSexception.Analyse(ex);
+                log.Error("Failed to retrieve data: " + errorDetails);
             }
 
             if (!string.IsNullOrEmpty(html)) {
@@ -321,13 +434,14 @@ namespace OutlookGoogleCalendarSync {
                 }
             } else {
                 log.Info("Did not find ZIP release.");
-                if (isManualCheck) MessageBox.Show("Failed to check for ZIP release", "Update Check Failed", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                if (isManualCheck) MessageBox.Show("Failed to check for ZIP release." + (string.IsNullOrEmpty(errorDetails) ? "" : "\r\n" + errorDetails),
+                    "Update Check Failed", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
 
         private void checkForZip_completed(object sender, RunWorkerCompletedEventArgs e) {
             if (isManualCheck)
-                MainForm.Instance.btCheckForUpdate.Text = "Check For Update";
+                Forms.Main.Instance.btCheckForUpdate.Text = "Check For Update";
         }
 
         private static MatchCollection getRelease(string source, string pattern) {

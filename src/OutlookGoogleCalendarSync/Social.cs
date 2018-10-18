@@ -42,38 +42,85 @@ namespace OutlookGoogleCalendarSync {
         }
         #endregion
 
-        #region Analytics
-        public static void TrackVersion() {
+        public static void TrackVersions() {
             if (System.Diagnostics.Debugger.IsAttached) return;
 
-            string analytics = null;
-            switch (OutlookFactory.OutlookVersion) {
-                case 11: analytics = "http://goo.gl/LMf6HT"; break; //2003
-                case 12: analytics = "http://goo.gl/Xpqzua"; break; //2007
-                case 14: analytics = "http://goo.gl/VM9Yaz"; break; //2010
-                case 15: analytics = "http://goo.gl/LvIiQd"; break; //2013
-                case 16: analytics = "http://goo.gl/Jhyzo5"; break; //2016
-                default: analytics = "http://goo.gl/mzHcHj"; break; //9999 (Unknown)
+            //OUTLOOK CLIENT
+            String outlookVersion = "Unknown";
+            try {
+                switch (OutlookOgcs.Factory.OutlookVersion) {
+                    case 11: outlookVersion = "2003"; break;
+                    case 12: outlookVersion = "2007"; break;
+                    case 14: outlookVersion = "2010"; break;
+                    case 15: outlookVersion = "2013"; break;
+                    case 16: outlookVersion = "2016"; break;
+                    case 17: outlookVersion = "2019"; break;
+                    default: outlookVersion = "Unknown-" + OutlookOgcs.Factory.OutlookVersion; break;
+                }
+            } catch (System.Exception ex) {
+                log.Error("Failed determining Outlook client version.");
+                OGCSexception.Analyse(ex);
+                outlookVersion = "Unknown";
             }
-            if (analytics != null) {
-                log.Debug("Retrieving URL: " + analytics);
-                WebClient wc = new WebClient();
-                wc.Headers.Add("user-agent", "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:37.0) Gecko/20100101 Firefox/37.0");
-                wc.DownloadStringCompleted += new DownloadStringCompletedEventHandler(trackVersion_completed);
-                wc.DownloadStringAsync(new Uri(analytics));
-            }
-        }
+            Analytics.Send(Analytics.Category.outlook, Analytics.Action.version, outlookVersion);
 
-        private static void trackVersion_completed(object sender, DownloadStringCompletedEventArgs e) {
-            if (e.Error != null)
-                log.Error("Failed to access URL: " + e.Error.Message);
+            //OGCS APPLICATION
+            Analytics.Send(Analytics.Category.ogcs, Analytics.Action.version, System.Windows.Forms.Application.ProductVersion);
         }
 
         public static void TrackSync() {
             //Use an API that isn't used anywhere else - can use to see how many syncs are happening
             if (System.Diagnostics.Debugger.IsAttached) return;
-            GoogleCalendar.Instance.GetSetting("locale");
+            GoogleOgcs.Calendar.Instance.GetSetting("locale");
         }
-        #endregion
+    }
+
+    public class Analytics {
+        private static readonly ILog log = LogManager.GetLogger(typeof(Analytics));
+
+        public enum Category {
+            ogcs,
+            outlook,
+            squirrel
+        }
+        public enum Action {
+            download,
+            install,
+            setting,
+            uninstall,
+            upgrade,
+            version
+        }
+        
+        public static void Send(Category category, Action action, String label) {
+            String cid = GoogleOgcs.Authenticator.HashedGmailAccount ?? "1";
+            String baseAnalyticsUrl = "https://www.google-analytics.com/collect?v=1&t=event&tid=UA-19426033-4&cid=" + cid;
+
+            String analyticsUrl = baseAnalyticsUrl + "&ec=" + category.ToString() + "&ea=" + action.ToString() + "&el=" + System.Net.WebUtility.UrlEncode(label);
+            log.Debug("Retrieving URL: " + analyticsUrl);
+            if (System.Diagnostics.Debugger.IsAttached) return;
+
+            WebClient wc = new WebClient();
+            wc.Headers.Add("user-agent", Settings.Instance.Proxy.BrowserUserAgent);
+            wc.DownloadStringCompleted += new DownloadStringCompletedEventHandler(sendTelemetry_completed);
+            wc.DownloadStringAsync(new Uri(analyticsUrl), analyticsUrl);
+        }
+
+        private static void sendTelemetry_completed(object sender, DownloadStringCompletedEventArgs e) {
+            if (e.Error != null) {
+                log.Warn("Failed to access URL " + e.UserState.ToString());
+                log.Error(e.Error.Message);
+                if (e.Error.InnerException != null) log.Error(e.Error.InnerException.Message);
+                if (e.Error is WebException) {
+                    WebException we = e.Error as WebException;
+                    if (we.Response != null) {
+                        log.Debug("Reading response.");
+                        System.IO.Stream stream = we.Response.GetResponseStream();
+                        System.IO.StreamReader sr = new System.IO.StreamReader(stream);
+                        log.Error(sr.ReadToEnd());
+                    }
+                }
+            }
+        }
     }
 }
