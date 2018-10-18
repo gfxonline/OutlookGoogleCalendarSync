@@ -47,7 +47,7 @@ namespace OutlookGoogleCalendarSync.OutlookOgcs {
 
                 log.Info("Exchange connection mode: " + exchangeConnectionMode.ToString());
                 
-                oNS = GetCurrentUser(oNS);
+                //oNS = GetCurrentUser(oNS);
 
                 if (!Settings.Instance.OutlookGalBlocked && currentUserName == "Unknown") {
                     log.Info("Current username is \"Unknown\"");
